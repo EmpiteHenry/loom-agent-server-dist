@@ -170,6 +170,44 @@ if ($userPath -notlike "*$dest*") {
     Ok "added $dest to your user PATH (restart terminals to pick it up)"
 }
 
+# ── 4.5 License key ──────────────────────────────────────────────────────────
+Bold "License key"
+Write-Host "loom-agent-server requires a license key to run. Paste the LOOM... key your"
+Write-Host "vendor issued you; the server verifies it offline and refuses to start without"
+Write-Host "a valid, unexpired key."
+$licFile = Join-Path $confDir "license"
+$license = ""
+if ((Test-Path $licFile) -and ((Get-Item $licFile).Length -gt 0) -and (YesNo "Reuse existing license at $licFile?" "Y")) {
+    $license = (Get-Content $licFile -Raw).Trim()
+    Ok "reusing $licFile"
+} else {
+    do {
+        $license = (Ask "Paste your license key (LOOM....)" "").Trim()
+        if (-not $license -and $AssumeYes) {
+            Warn "no license provided; server will not start until you write one to $licFile"
+            break
+        }
+        if (-not $license) { Warn "a license key is required to run the server" }
+    } while (-not $license)
+    if ($license) {
+        Set-Content -Path $licFile -Value $license -NoNewline
+        # Validate now: start briefly on a throwaway port, then stop.
+        $logTmp = Join-Path $env:TEMP "loom-lic-check.log"
+        $p = Start-Process -FilePath $target -ArgumentList "serve","--skip-cli-auth-sync","--port","0" `
+            -RedirectStandardError $logTmp -RedirectStandardOutput "$logTmp.out" -PassThru -WindowStyle Hidden
+        Start-Sleep -Seconds 1
+        try { $p | Stop-Process -Force -ErrorAction SilentlyContinue } catch {}
+        $licLog = ((Get-Content $logTmp -Raw -ErrorAction SilentlyContinue) + (Get-Content "$logTmp.out" -Raw -ErrorAction SilentlyContinue))
+        if ($licLog -match "license check failed") {
+            Warn "that key did NOT validate:"
+            Write-Host "      $(($licLog -split "`n" | Select-String 'license check failed' | Select-Object -First 1))"
+        } else {
+            Ok "license accepted, wrote $licFile"
+        }
+        Remove-Item $logTmp,"$logTmp.out" -ErrorAction SilentlyContinue
+    }
+}
+
 # ── 5. API key (HMAC) ───────────────────────────────────────────────────────
 Bold "API key (HMAC auth)"
 Write-Host "The server signs every request with a shared key. Empty = auth disabled (localhost only)."
@@ -200,6 +238,7 @@ Bold "Run the server"
 $registered = $false
 if (YesNo "Register a logon scheduled task that autostarts the server?" "Y") {
     $envPrefix = "`$env:LOOM_API_KEY='$key'; "
+    if ($license) { $envPrefix += "`$env:LOOM_LICENSE_KEY='$license'; " }
     if ($PublicUrl) { $envPrefix += "`$env:LOOM_PUBLIC_BASE_URL='$PublicUrl'; " }
     $cmd = "$envPrefix& '$target' serve --dev --port $Port *> '$env:USERPROFILE\loom-agent-server.log'"
     $action  = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-WindowStyle Hidden -Command `"$cmd`""
