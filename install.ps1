@@ -57,8 +57,25 @@ function YesNo($prompt, $default = "Y") {
     return ($a -match '^[Yy]')
 }
 
-Bold "loom-agent-server installer (Windows)"
-Write-Host ""
+function Banner {
+    $M = "Magenta"; $C = "Cyan"; $D = "DarkGray"
+    Write-Host ""
+    Write-Host "   ___ __  __ ___ ___ _____ ___ " -ForegroundColor $M -NoNewline
+    Write-Host "      _    ___   ___  __  __" -ForegroundColor $C
+    Write-Host "  | __|  \/  | _ \_ _|_   _| __|" -ForegroundColor $M -NoNewline
+    Write-Host "     | |  / _ \ / _ \|  \/  |" -ForegroundColor $C
+    Write-Host "  | _|| |\/| |  _/| |  | | | _| " -ForegroundColor $M -NoNewline
+    Write-Host "     | |_| (_) | (_) | |\/| |" -ForegroundColor $C
+    Write-Host "  |___|_|  |_|_| |___| |_| |___|" -ForegroundColor $M -NoNewline
+    Write-Host "     |____\___/ \___/|_|  |_|" -ForegroundColor $C
+    Write-Host ""
+    Write-Host "     EMPITE LOOM - agent-server installer (Windows)" -ForegroundColor $D
+    Write-Host "   --------------------------------------------------------" -ForegroundColor $D
+    Write-Host ""
+}
+
+Clear-Host
+Banner
 
 # ── 1. arch detect ──────────────────────────────────────────────────────────
 $arch = switch ($env:PROCESSOR_ARCHITECTURE) {
@@ -99,6 +116,40 @@ foreach ($c in @("claude","codex","gemini")) {
     if (Get-Command $c -ErrorAction SilentlyContinue) { Ok "LLM CLI: $c"; $haveLLM = $true }
 }
 if (-not $haveLLM) { Warn "no LLM CLI (claude/codex/gemini) on PATH — install & log into one before creating agents" }
+
+# ── 3b. Default agent model (radio picker) ──────────────────────────────────
+function Choose-Model {
+    $clis    = @("claude","codex","gemini")
+    $names   = @("Claude Code","Codex CLI","Gemini CLI")
+    $vendors = @("Anthropic","OpenAI","Google")
+    $sel = 0
+    for ($i = 0; $i -lt $clis.Count; $i++) {
+        if (Get-Command $clis[$i] -ErrorAction SilentlyContinue) { $sel = $i; break }
+    }
+    if ($AssumeYes) { return $clis[$sel] }
+    while ($true) {
+        Write-Host ""
+        Write-Host "  Select the default agent model:" -ForegroundColor White
+        for ($i = 0; $i -lt $clis.Count; $i++) {
+            $mark = if ($i -eq $sel) { "(*)" } else { "( )" }
+            $installed = [bool](Get-Command $clis[$i] -ErrorAction SilentlyContinue)
+            $st  = if ($installed) { "detected" } else { "not installed" }
+            $col = if ($i -eq $sel) { "Cyan" } else { "Gray" }
+            Write-Host ("    {0}  {1}) {2,-12} {3,-9}  {4}" -f $mark, ($i+1), $names[$i], $vendors[$i], $st) -ForegroundColor $col
+        }
+        $k = Read-Host "  press 1-3 to choose, Enter to confirm"
+        if ([string]::IsNullOrWhiteSpace($k)) { break }
+        if ($k -match '^[1-3]$') { $sel = [int]$k - 1 }
+    }
+    return $clis[$sel]
+}
+
+$model = Choose-Model
+$confDir = Join-Path $env:USERPROFILE ".loom-agent-server"
+New-Item -ItemType Directory -Force -Path $confDir | Out-Null
+Set-Content -Path (Join-Path $confDir "installer.conf") -Value "LOOM_DEFAULT_MODEL=$model"
+Ok "default agent model: $model  (saved -> $confDir\installer.conf)"
+if (-not (Get-Command $model -ErrorAction SilentlyContinue)) { Warn "$model is not on PATH yet — install & log into it before creating agents" }
 if (Get-Command wsl -ErrorAction SilentlyContinue) { Ok "wsl present (needed for tmux-based agents)" }
 else { Warn "wsl NOT found — agents need tmux via WSL2. Install: wsl --install" }
 
