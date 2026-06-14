@@ -56,6 +56,14 @@ if ($procs) {
     Ok "stopped running loom-agent-server process(es)"
 }
 
+# Tear down a Cloudflare tunnel started by install.ps1, if any.
+$tunPid = Join-Path $env:USERPROFILE "loom-tunnel.pid"
+if (Test-Path $tunPid) {
+    try { Stop-Process -Id ([int](Get-Content $tunPid)) -Force -ErrorAction SilentlyContinue } catch {}
+    Remove-Item $tunPid,"$env:USERPROFILE\loom-tunnel.url","$env:USERPROFILE\loom-tunnel.log","$env:USERPROFILE\loom-tunnel.log.err" -Force -ErrorAction SilentlyContinue
+    Ok "stopped Cloudflare tunnel"
+}
+
 # ── 3. Remove the installed binary ───────────────────────────────────────────
 Bold "Removing the binary"
 $removed = $false

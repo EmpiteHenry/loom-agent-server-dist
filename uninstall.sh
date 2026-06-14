@@ -66,6 +66,13 @@ if pgrep -f "$BIN serve" >/dev/null 2>&1; then
     ok "stopped running $BIN process(es)"
 fi
 
+# Tear down a Cloudflare tunnel started by install.sh, if any.
+if [[ -f /tmp/loom-tunnel.pid ]]; then
+    kill "$(cat /tmp/loom-tunnel.pid)" 2>/dev/null || true
+    rm -f /tmp/loom-tunnel.pid /tmp/loom-tunnel.url /tmp/loom-tunnel.log
+    ok "stopped Cloudflare tunnel"
+fi
+
 # ── 3. Remove the installed binary (search the usual install dirs) ──────────
 bold "Removing the binary"
 for d in /usr/local/bin "$HOME/.local/bin" "$(command -v "$BIN" 2>/dev/null | xargs -I{} dirname {} 2>/dev/null)"; do

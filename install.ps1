@@ -256,6 +256,56 @@ if (YesNo "Register a logon scheduled task that autostarts the server?" "Y") {
     }
 }
 
+# ── 7b. remote access (optional Cloudflare quick tunnel) ────────────────────
+# Expose the server on a public https://<slug>.trycloudflare.com origin.
+# Quick tunnels need no Cloudflare account; the URL is random and changes on
+# restart. For a stable hostname use a named tunnel + your own domain.
+function Setup-Tunnel {
+    $cf = Get-Command cloudflared -ErrorAction SilentlyContinue
+    if (-not $cf) {
+        Warn "cloudflared not found — needed for the tunnel."
+        if (Get-Command winget -ErrorAction SilentlyContinue) {
+            if (YesNo "Install cloudflared with winget now?" "Y") {
+                winget install --id Cloudflare.cloudflared -e --accept-source-agreements --accept-package-agreements
+            } else { Warn "skipping tunnel"; return }
+        } else {
+            Warn "install it from https://pkg.cloudflare.com, then re-run."
+            return
+        }
+    }
+    $log = "$env:USERPROFILE\loom-tunnel.log"
+    if (Test-Path $log) { Remove-Item $log -Force }
+    Write-Host "  -> starting Cloudflare quick tunnel -> http://localhost:$Port"
+    $proc = Start-Process -FilePath "cloudflared" `
+        -ArgumentList "tunnel","--no-autoupdate","--url","http://localhost:$Port" `
+        -RedirectStandardOutput $log -RedirectStandardError "$log.err" `
+        -WindowStyle Hidden -PassThru
+    $proc.Id | Out-File "$env:USERPROFILE\loom-tunnel.pid"
+    $url = $null
+    foreach ($i in 1..30) {
+        Start-Sleep -Seconds 1
+        $hit = Select-String -Path $log,"$log.err" -Pattern 'https://[a-z0-9-]+\.trycloudflare\.com' -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($hit) { $url = $hit.Matches[0].Value; break }
+    }
+    if ($url) {
+        $url | Out-File "$env:USERPROFILE\loom-tunnel.url"
+        Ok "public URL: $url"
+        Write-Host "      -> proxies to http://localhost:$Port (pid $($proc.Id))"
+        Write-Host "      callers must send:  Authorization: Bearer <LOOM_API_KEY>"
+        Write-Host "      stop it with:       Stop-Process -Id $($proc.Id)"
+        Write-Host "      URL is random & changes on restart — use a named tunnel + domain for a stable one."
+    } else {
+        Warn "tunnel didn't report a URL within 30s — check $log"
+    }
+}
+
+Bold "Remote access"
+Write-Host "Optionally expose this server on the public internet via a Cloudflare quick"
+Write-Host "tunnel (no account needed). Skip for local-only / LAN use."
+if (YesNo "Expose this server to the internet via a Cloudflare tunnel?" "N") {
+    Setup-Tunnel
+}
+
 # ── 8. smoke test ───────────────────────────────────────────────────────────
 if ($registered) {
     Start-Sleep -Seconds 2
