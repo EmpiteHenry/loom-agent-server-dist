@@ -86,12 +86,17 @@ $arch = switch ($env:PROCESSOR_ARCHITECTURE) {
 Ok "platform: windows/$arch"
 
 # ── 2. locate or download the binary ────────────────────────────────────────
-$localBin = Join-Path $PSScriptRoot $Bin
+# NOTE: when bootstrapped via `irm ... | iex` there is no script file, so
+# $PSScriptRoot is empty. Guard before Join-Path, which rejects an empty -Path.
 $src = $null
-if ($PSScriptRoot -and (Test-Path $localBin)) {
-    $src = $localBin
-    Ok "found bundled $Bin"
-} else {
+if ($PSScriptRoot) {
+    $localBin = Join-Path $PSScriptRoot $Bin
+    if (Test-Path $localBin) {
+        $src = $localBin
+        Ok "found bundled $Bin"
+    }
+}
+if (-not $src) {
     Bold "Downloading $Bin ($Version)"
     if ($Version -eq "latest") {
         $base = "https://github.com/$Repo/releases/latest/download"
