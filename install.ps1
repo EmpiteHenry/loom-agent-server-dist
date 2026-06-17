@@ -258,6 +258,26 @@ if (YesNo "Register a logon scheduled task that autostarts the server?" "Y") {
         $registered = $true
     } catch {
         Warn "could not register scheduled task: $($_.Exception.Message)"
+        # Registering a task can be blocked (no admin / group policy). Fall back
+        # to a per-user Startup-folder shortcut, which never needs elevation.
+        try {
+            $startup = [Environment]::GetFolderPath('Startup')
+            $lnk = Join-Path $startup "loom-agent-server.lnk"
+            $ws  = New-Object -ComObject WScript.Shell
+            $sc  = $ws.CreateShortcut($lnk)
+            $sc.TargetPath = "powershell.exe"
+            $sc.Arguments  = "-WindowStyle Hidden -Command `"$cmd`""
+            $sc.Save()
+            Ok "registered Startup shortcut instead -> $lnk (autostarts at next logon)"
+            # Start it now too, so this session has the server running.
+            Start-Process -FilePath "powershell.exe" `
+                -ArgumentList "-WindowStyle","Hidden","-Command",$cmd -WindowStyle Hidden | Out-Null
+            Write-Host "      logs:    Get-Content `$env:USERPROFILE\loom-agent-server.log -Wait"
+            $registered = $true
+        } catch {
+            Warn "startup-shortcut fallback also failed: $($_.Exception.Message)"
+            Warn "start the server manually (see the end of this script)."
+        }
     }
 }
 
@@ -278,8 +298,30 @@ function Setup-Tunnel {
             return
         }
     }
+    # A previous quick tunnel may still be running and holding the log file
+    # open. Stop it first (best-effort) using the pid we saved last time, so we
+    # can rotate the log without the installer crashing on a locked file.
+    $pidFile = "$env:USERPROFILE\loom-tunnel.pid"
+    if (Test-Path $pidFile) {
+        $oldPid = (Get-Content $pidFile -Raw -ErrorAction SilentlyContinue).Trim()
+        if ($oldPid -match '^\d+$') {
+            try {
+                Stop-Process -Id ([int]$oldPid) -Force -ErrorAction Stop
+                Ok "stopped previous tunnel (pid $oldPid)"
+                Start-Sleep -Milliseconds 500   # let the handle on the log release
+            } catch {}
+        }
+    }
     $log = "$env:USERPROFILE\loom-tunnel.log"
-    if (Test-Path $log) { Remove-Item $log -Force }
+    if (Test-Path $log) {
+        try { Remove-Item $log,"$log.err" -Force -ErrorAction Stop }
+        catch {
+            # Still locked (e.g. a stray cloudflared) — don't die; use a fresh file.
+            $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
+            $log = "$env:USERPROFILE\loom-tunnel-$stamp.log"
+            Warn "previous tunnel log is in use; logging to $log instead"
+        }
+    }
     Write-Host "  -> starting Cloudflare quick tunnel -> http://localhost:$Port"
     $proc = Start-Process -FilePath "cloudflared" `
         -ArgumentList "tunnel","--no-autoupdate","--url","http://localhost:$Port" `
